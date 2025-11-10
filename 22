@@ -1,0 +1,37 @@
+def format_prompt_with_region_reference(prompt, region_id='[0]'):
+    """
+    自动将prompt改写为引用特定区域的格式
+    """
+    prompt_lower = prompt.lower()
+    
+    # 如果已经有区域引用，直接返回
+    if region_id in prompt:
+        return prompt
+    
+    # 替换常见的指代词
+    replacements = {
+        'this object': region_id,
+        'this region': region_id,
+        'this area': region_id,
+        'the object': region_id,
+        'the region': region_id,
+        'the area': region_id,
+        'it': region_id,
+        'this': region_id,
+        'that': region_id,
+    }
+    
+    modified = prompt
+    for old, new in replacements.items():
+        if old in prompt_lower:
+            # 保持原始大小写
+            idx = prompt_lower.find(old)
+            modified = prompt[:idx] + new + prompt[idx+len(old):]
+            return modified
+    
+    # 如果没有匹配，在问题开头添加引用
+    return f"{region_id} {prompt}"
+
+# 使用示例
+modified_prompt = format_prompt_with_region_reference(args.prompt, '[0]')
+prompt_text = prefix + modified_prompt
