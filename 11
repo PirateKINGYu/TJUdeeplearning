@@ -1,0 +1,46 @@
+if args.refer_mask_path:
+    print(f"\033[1;33m   Mode: Regional Understanding with <mem> token\033[0m")
+    
+    # 加载并处理refer_mask（与demo/app.py完全一致）
+    mask_img = Image.open(args.refer_mask_path).convert('L')
+    mask_array = torch.from_numpy(np.array(mask_img)) > 128
+    mask_resized = T.resize(mask_array.unsqueeze(0).unsqueeze(0).float(), frame_size)
+    mask_resized = mask_resized.squeeze(0).squeeze(0) > 0.5
+    
+    # 构建refer_mask [num_frames, num_objects, height, width]
+    refer_mask = torch.zeros(frames.size(0), 1, *frame_size, dtype=torch.bool)
+    refer_mask[args.prompt_frame_idx, 0] = mask_resized
+    
+    # 处理refer_mask（temporal merge）
+    if refer_mask.size(0) % 2 != 0:
+        refer_mask = torch.cat((refer_mask, refer_mask[-1, None]))
+    refer_mask = refer_mask.flatten(1)
+    refer_mask = F.max_pool1d(refer_mask.float().transpose(-1, -2), kernel_size=2, stride=2).transpose(-1, -2)
+    refer_mask = refer_mask.view(-1, 1, *frame_size)
+    
+    # 关键：计算实际有mask的帧，动态生成<|mem|> token
+    num_objs = refer_mask.size(1)
+    vids = []
+    for obj_idx in range(num_objs):
+        # 找出有mask的帧（temporal merge后的索引 * 2 + 1）
+        tids = (refer_mask[:, obj_idx].any(dim=(-1, -2)).nonzero()[:, 0] * 2 + 1).tolist()
+        if len(tids) == 0:
+            # 如果mask全空，至少给一个token
+            refer_mask[:, obj_idx] = True
+            tids = [1]
+        vids.append(tids)
+    
+    # 构建prompt - <|mem|> token的数量必须等于有mask的帧数
+    if not is_video:
+        # 图像模式：只有一个 <|mem|> token
+        prefix = f'Here is an image with the following highlighted regions:\n[0]: <{args.prompt_frame_idx + 1}> {MEM_TOKEN}\n'
+    else:
+        # 视频模式：为每个有mask的帧添加 <|mem|> token
+        prefix = f'Here is a video with {len(images)} frames denoted as <1> to <{len(images)}>. The highlighted regions are as follows:\n'
+        for obj_idx, tids in enumerate(vids):
+            # 每个tid对应一个 <|mem|> token
+            prefix += f'[{obj_idx}]: ' + ' '.join([f'<{tid}>-<{tid + 1}> {MEM_TOKEN}' for tid in tids]) + '\n'
+    
+    prompt_text = prefix + args.prompt
+    
+    # ... 后续处理data和refer_mask调
